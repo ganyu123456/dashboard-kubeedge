@@ -1,0 +1,126 @@
+kind: pipeline
+name: kubeedge-dashboard-amd64
+type: docker
+
+volumes:
+  - name: docker
+    host:
+      path: /var/run/docker.sock
+
+trigger:
+  branch:
+    - main
+  event:
+    - push
+
+steps:
+  # 构建 AMD64 镜像
+  - name: build-amd64
+    image: docker
+    environment:
+      http_proxy: http://192.168.2.3:7890
+      https_proxy: http://192.168.2.3:7890
+    commands:
+      - echo "🔨 [AMD64] 开始构建 KubeEdge Dashboard 镜像..."
+      - docker build -t kubeedge-dashboard:latest .
+      - docker tag kubeedge-dashboard:latest harbor.zkjgy.online/library/kubeedge-dashboard:latest
+      - echo "[AMD64] 镜像构建成功"
+    volumes:
+      - name: docker
+        path: /var/run/docker.sock
+    branches:
+      - main
+  
+  # 推送到 Harbor
+  - name: push-harbor-amd64
+    image: docker
+    environment:
+      HARBOR_USERNAME:
+        from_secret: harbor_username
+      HARBOR_PASSWORD:
+        from_secret: harbor_password
+    commands:
+      - echo "🔐 [AMD64] 登录 Harbor 仓库..."
+      - echo $HARBOR_PASSWORD | docker login harbor.zkjgy.online --username $HARBOR_USERNAME --password-stdin
+      - echo "📤 [AMD64] 推送镜像到 Harbor..."
+      - docker push harbor.zkjgy.online/library/kubeedge-dashboard:latest
+      - echo "✅ [AMD64] 镜像推送成功"
+    volumes:
+      - name: docker
+        path: /var/run/docker.sock
+    depends_on:
+      - build-amd64
+    branches:
+      - main
+
+volumes:
+  - name: docker
+    host:
+      path: /var/run/docker.sock
+
+---
+kind: pipeline
+name: kubeedge-dashboard-arm64
+type: docker
+
+depends_on: []
+
+platform:
+  os: linux
+  arch: arm64
+
+volumes:
+  - name: docker
+    host:
+      path: /var/run/docker.sock
+
+trigger:
+  branch:
+    - main
+  event:
+    - push
+
+steps:
+  # 构建 ARM64 镜像
+  - name: build-arm64
+    image: docker
+    environment:
+      http_proxy: http://192.168.2.3:7890
+      https_proxy: http://192.168.2.3:7890
+    commands:
+      - echo "🔨 [ARM64] 开始构建 KubeEdge Dashboard 镜像..."
+      - docker build -t kubeedge-dashboard:latest .
+      - docker tag kubeedge-dashboard:latest harborarm.zkjgy.online/library/kubeedge-dashboard:latest
+      - echo "✅ [ARM64] 镜像构建成功"
+    volumes:
+      - name: docker
+        path: /var/run/docker.sock
+    branches:
+      - main
+  
+  # 推送到 Harbor ARM
+  - name: push-harbor-arm64
+    image: docker
+    environment:
+      HARBOR_USERNAME:
+        from_secret: harbor_username
+      HARBOR_PASSWORD:
+        from_secret: harbor_password
+    commands:
+      - echo "🔐 [ARM64] 登录 Harbor ARM 仓库..."
+      - echo $HARBOR_PASSWORD | docker login harborarm.zkjgy.online --username $HARBOR_USERNAME --password-stdin
+      - echo "📤 [ARM64] 推送镜像到 Harbor..."
+      - docker push harborarm.zkjgy.online/library/kubeedge-dashboard:latest
+      - echo "✅ [ARM64] 镜像推送成功"
+    volumes:
+      - name: docker
+        path: /var/run/docker.sock
+    depends_on:
+      - build-arm64
+    branches:
+      - main
+
+volumes:
+  - name: docker
+    host:
+      path: /var/run/docker.sock

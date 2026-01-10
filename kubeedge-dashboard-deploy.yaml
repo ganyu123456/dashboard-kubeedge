@@ -1,0 +1,272 @@
+# KubeEdge Dashboard Kubernetes 部署文件
+#
+# 端口说明：
+#   - K8s API Server: 6443 (HTTPS) - Dashboard 后端通过此端口连接 K8s 集群
+#   - Dashboard 后端 API: 8080 - Dashboard 前端通过此端口连接后端服务
+#   - Dashboard 前端 Web: 3000 - 用户浏览器访问的端口
+#   - NodePort: 30080 - 外部访问 Dashboard 的端口
+#
+# 部署命令：
+#   kubectl apply -f kubeedge-dashboard-deploy.yaml
+#
+# 访问方式：
+#   http://<节点IP>:30080
+#
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubeedge-dashboard
+
+---
+# ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeedge-dashboard
+  namespace: kubeedge-dashboard
+  labels:
+    app: kubeedge-dashboard
+
+---
+# ClusterRole - 为 Dashboard 提供必要的权限
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeedge-dashboard
+  labels:
+    app: kubeedge-dashboard
+rules:
+  # 允许访问所有资源（根据项目需要，Dashboard 需要查看和管理各种资源）
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - nodes
+      - pods
+      - services
+      - configmaps
+      - secrets
+      - serviceaccounts
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - daemonsets
+      - statefulsets
+      - replicasets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - roles
+      - rolebindings
+      - clusterroles
+      - clusterrolebindings
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # KubeEdge 相关资源
+  - apiGroups: ["devices.kubeedge.io"]
+    resources:
+      - devices
+      - devicemodels
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  - apiGroups: ["rules.kubeedge.io"]
+    resources:
+      - rules
+      - ruleendpoints
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  - apiGroups: ["apps.kubeedge.io"]
+    resources:
+      - edgeapplications
+      - nodegroups
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # CRD 相关
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources:
+      - customresourcedefinitions
+    verbs: ["get", "list", "watch"]
+  
+  # 事件查看
+  - apiGroups: [""]
+    resources:
+      - events
+    verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeedge-dashboard
+  labels:
+    app: kubeedge-dashboard
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubeedge-dashboard
+subjects:
+  - kind: ServiceAccount
+    name: kubeedge-dashboard
+    namespace: kubeedge-dashboard
+
+---
+# ConfigMap - 后端配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubeedge-dashboard-config
+  namespace: kubeedge-dashboard
+  labels:
+    app: kubeedge-dashboard
+data:
+  # K8s API Server 配置（Dashboard 后端连接 K8s 集群用）
+  # 在 Pod 内部可以使用 kubernetes.default.svc 访问 K8s API Server
+  API_SERVER_HOST: "https://kubernetes.default.svc:6443"
+  API_SERVER_SKIP_TLS_VERIFY: "true"
+  # Dashboard 后端 API 监听配置（前端连接后端用）
+  INSECURE_BIND_ADDRESS: "0.0.0.0"
+  INSECURE_PORT: "8080"
+
+---
+# Deployment - KubeEdge Dashboard
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeedge-dashboard
+  namespace: kubeedge-dashboard
+  labels:
+    app: kubeedge-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeedge-dashboard
+  template:
+    metadata:
+      labels:
+        app: kubeedge-dashboard
+    spec:
+      serviceAccountName: kubeedge-dashboard
+      containers:
+      - name: dashboard
+        image: harbor.zkjgy.online/library/kubeedge-dashboard:latest
+        imagePullPolicy: Always
+        ports:
+        - name: web
+          containerPort: 3000
+          protocol: TCP
+        - name: api
+          containerPort: 8080
+          protocol: TCP
+        env:
+        # 前端连接后端 API 的地址（容器内部，前端连后端）
+        - name: API_SERVER
+          value: "http://127.0.0.1:8080"
+        - name: API_SERVER_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: kubeedge-dashboard-config
+              key: API_SERVER_HOST
+        - name: API_SERVER_SKIP_TLS_VERIFY
+          valueFrom:
+            configMapKeyRef:
+              name: kubeedge-dashboard-config
+              key: API_SERVER_SKIP_TLS_VERIFY
+        - name: INSECURE_BIND_ADDRESS
+          valueFrom:
+            configMapKeyRef:
+              name: kubeedge-dashboard-config
+              key: INSECURE_BIND_ADDRESS
+        - name: INSECURE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: kubeedge-dashboard-config
+              key: INSECURE_PORT
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+---
+# Service - Web 前端服务
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeedge-dashboard-web
+  namespace: kubeedge-dashboard
+  labels:
+    app: kubeedge-dashboard
+spec:
+  type: NodePort
+  selector:
+    app: kubeedge-dashboard
+  ports:
+  - name: web
+    port: 3000
+    targetPort: 3000
+    nodePort: 30080
+    protocol: TCP
+
+---
+# Service - API 后端服务
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeedge-dashboard-api
+  namespace: kubeedge-dashboard
+  labels:
+    app: kubeedge-dashboard
+spec:
+  type: ClusterIP
+  selector:
+    app: kubeedge-dashboard
+  ports:
+  - name: api
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+
+---
+# （可选）Ingress - 如果需要通过域名访问
+# 取消注释以下内容并修改域名
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: kubeedge-dashboard
+#   namespace: kubeedge-dashboard
+#   labels:
+#     app: kubeedge-dashboard
+#   annotations:
+#     nginx.ingress.kubernetes.io/rewrite-target: /
+# spec:
+#   ingressClassName: nginx
+#   rules:
+#   - host: dashboard.kubeedge.local
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: kubeedge-dashboard-web
+#             port:
+#               number: 3000
+
