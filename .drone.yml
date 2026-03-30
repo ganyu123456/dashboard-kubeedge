@@ -22,8 +22,7 @@ steps:
       https_proxy: http://192.168.2.3:7890
     commands:
       - echo "🔨 [AMD64] 开始构建 KubeEdge Dashboard 镜像..."
-      - docker builder prune -f
-      - docker build --pull -t kubeedge-dashboard:latest .
+      - docker build -t kubeedge-dashboard:latest .
       - docker tag kubeedge-dashboard:latest harbor.zkjgy.online/library/kubeedge-dashboard:latest
       - echo "✅ [AMD64] 镜像构建成功"
     volumes:
@@ -85,7 +84,7 @@ steps:
       https_proxy: http://192.168.2.3:7890
     commands:
       - echo "🔨 [ARM64] 开始构建 KubeEdge Dashboard 镜像..."
-      - docker build --pull -t kubeedge-dashboard:latest .
+      - docker build -t kubeedge-dashboard:latest .
       - docker tag kubeedge-dashboard:latest harborarm.zkjgy.online/library/kubeedge-dashboard:latest
       - echo "✅ [ARM64] 镜像构建成功"
     volumes:

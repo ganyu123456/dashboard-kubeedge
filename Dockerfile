@@ -1,5 +1,5 @@
 # ==================== 后端构建阶段 ====================
-FROM golang:1.23-alpine AS backend-builder
+FROM registry.cn-hangzhou.aliyuncs.com/library/golang:1.23-alpine AS backend-builder
 
 WORKDIR /workspace
 
@@ -30,7 +30,7 @@ WORKDIR /workspace/modules/api
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" -o /api-server main.go
 
 # ==================== 前端构建阶段 ====================
-FROM node:20-alpine AS frontend-builder
+FROM registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine AS frontend-builder
 
 WORKDIR /app
 
@@ -54,7 +54,7 @@ COPY modules/web/ ./
 RUN npm run build
 
 # ==================== 最终运行镜像 ====================
-FROM node:20-alpine AS runner
+FROM registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine AS runner
 
 WORKDIR /app
 
