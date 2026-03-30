@@ -22,9 +22,9 @@ steps:
       https_proxy: http://192.168.2.3:7890
     commands:
       - echo "🔨 [AMD64] 开始构建 KubeEdge Dashboard 镜像..."
-      - docker build -t kubeedge-dashboard:latest .
+      - docker build --pull -t kubeedge-dashboard:latest .
       - docker tag kubeedge-dashboard:latest harbor.zkjgy.online/library/kubeedge-dashboard:latest
-      - echo "[AMD64] 镜像构建成功"
+      - echo "✅ [AMD64] 镜像构建成功"
     volumes:
       - name: docker
         path: /var/run/docker.sock
@@ -52,11 +52,6 @@ steps:
       - build-amd64
     branches:
       - main
-
-volumes:
-  - name: docker
-    host:
-      path: /var/run/docker.sock
 
 ---
 kind: pipeline
@@ -89,7 +84,7 @@ steps:
       https_proxy: http://192.168.2.3:7890
     commands:
       - echo "🔨 [ARM64] 开始构建 KubeEdge Dashboard 镜像..."
-      - docker build -t kubeedge-dashboard:latest .
+      - docker build --pull -t kubeedge-dashboard:latest .
       - docker tag kubeedge-dashboard:latest harborarm.zkjgy.online/library/kubeedge-dashboard:latest
       - echo "✅ [ARM64] 镜像构建成功"
     volumes:
