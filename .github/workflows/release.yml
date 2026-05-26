@@ -11,9 +11,20 @@ env:
   CHART_REGISTRY: harbor.zkjgy.online/charts
 
 jobs:
-  build-push-image:
-    name: Build & Push Multi-arch Image
-    runs-on: ubuntu-latest
+  # 并行：原生 runner 构建各架构镜像，推送 -<arch> 标签，同时导出离线 tar
+  build-arch:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runs-on: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runs-on }}
     outputs:
       version: ${{ steps.meta.outputs.version }}
     steps:
@@ -23,7 +34,6 @@ jobs:
         id: meta
         run: echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - name: Login to Harbor
@@ -33,41 +43,26 @@ jobs:
           username: ${{ secrets.HARBOR_USERNAME }}
           password: ${{ secrets.HARBOR_PASSWORD }}
 
-      - name: Build and push multi-arch image
+      - name: Build and push arch image
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
+          provenance: false
           tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
-  save-offline-images:
-    name: Save Offline Image (${{ matrix.arch }})
-    runs-on: ubuntu-latest
-    needs: build-push-image
-    strategy:
-      matrix:
-        arch: [amd64, arm64]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build single-arch image for offline export
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/${{ matrix.arch }}
-          push: false
-          tags: ${{ env.IMAGE_NAME }}:${{ needs.build-push-image.outputs.version }}
-          outputs: type=docker,dest=/tmp/kubeedge-dashboard-${{ matrix.arch }}.tar
-
-      - name: Compress tarball
-        run: gzip /tmp/kubeedge-dashboard-${{ matrix.arch }}.tar
+      # 拉取刚才推送的单架构镜像并导出为离线 tar 包
+      - name: Export offline image
+        run: |
+          IMG="${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}-${{ matrix.arch }}"
+          docker pull "$IMG"
+          docker tag "$IMG" "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+          docker save "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}" \
+            | gzip > /tmp/kubeedge-dashboard-${{ matrix.arch }}.tar.gz
 
       - uses: actions/upload-artifact@v4
         with:
@@ -75,29 +70,63 @@ jobs:
           path: /tmp/kubeedge-dashboard-${{ matrix.arch }}.tar.gz
           retention-days: 1
 
+  # 合并多架构 manifest：把 -amd64 / -arm64 合成 :latest 与 :<version>
+  merge-manifest:
+    name: Merge Multi-arch Manifest
+    runs-on: ubuntu-latest
+    needs: build-arch
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Create and push manifest
+        run: |
+          VERSION="${{ needs.build-arch.outputs.version }}"
+          docker buildx imagetools create \
+            -t ${{ env.IMAGE_NAME }}:${VERSION} \
+            -t ${{ env.IMAGE_NAME }}:latest \
+            ${{ env.IMAGE_NAME }}:${VERSION}-amd64 \
+            ${{ env.IMAGE_NAME }}:${VERSION}-arm64
+
+  # 打包 Helm Chart 并推送到 Harbor OCI 仓库
   package-helm:
     name: Package & Push Helm Chart
     runs-on: ubuntu-latest
-    needs: build-push-image
+    needs: build-arch
+    outputs:
+      chart_version: ${{ steps.chart.outputs.chart_version }}
+      chart_file: ${{ steps.chart.outputs.chart_file }}
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
 
       - name: Update Chart version
+        id: chart
         run: |
-          VERSION=${{ needs.build-push-image.outputs.version }}
-          CHART_VERSION=${VERSION#v}
+          VERSION="${{ needs.build-arch.outputs.version }}"
+          CHART_VERSION="${VERSION#v}"
           sed -i "s/^version:.*/version: ${CHART_VERSION}/" charts/kubeedge-dashboard/Chart.yaml
           sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" charts/kubeedge-dashboard/Chart.yaml
+          sed -i "s|^\(\s*tag:\).*|\1 \"${VERSION}\"|" charts/kubeedge-dashboard/values.yaml
+          echo "chart_version=${CHART_VERSION}" >> $GITHUB_OUTPUT
+          echo "chart_file=kubeedge-dashboard-${CHART_VERSION}.tgz" >> $GITHUB_OUTPUT
 
       - name: Package Helm Chart
-        run: helm package charts/kubeedge-dashboard --destination /tmp/helm-output
+        run: |
+          mkdir -p /tmp/helm-output
+          helm package charts/kubeedge-dashboard --destination /tmp/helm-output
 
       - name: Push to Harbor OCI
         run: |
           helm registry login ${{ env.REGISTRY }} \
-            --username ${{ secrets.HARBOR_USERNAME }} \
-            --password ${{ secrets.HARBOR_PASSWORD }}
+            --username '${{ secrets.HARBOR_USERNAME }}' \
+            --password '${{ secrets.HARBOR_PASSWORD }}'
           helm push /tmp/helm-output/*.tgz oci://${{ env.CHART_REGISTRY }}
 
       - uses: actions/upload-artifact@v4
@@ -106,10 +135,11 @@ jobs:
           path: /tmp/helm-output/*.tgz
           retention-days: 1
 
+  # 创建 GitHub Release，附带离线镜像包和 Helm Chart 包
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-push-image, save-offline-images, package-helm]
+    needs: [build-arch, merge-manifest, package-helm]
     permissions:
       contents: write
     steps:
@@ -132,46 +162,61 @@ jobs:
 
       - name: Generate release notes
         run: |
-          VERSION=${{ needs.build-push-image.outputs.version }}
-          CHART_VERSION=${VERSION#v}
+          VERSION="${{ needs.build-arch.outputs.version }}"
+          CHART_VERSION="${{ needs.package-helm.outputs.chart_version }}"
+          CHART_FILE="${{ needs.package-helm.outputs.chart_file }}"
           cat > /tmp/release-notes.md << EOF
           ## KubeEdge Dashboard ${VERSION}
 
-          ### 容器镜像（已推送至 Harbor）
+          ### 容器镜像（多架构，已推送至 Harbor）
 
-          | 架构 | 镜像 |
-          |------|------|
-          | amd64 / arm64 | \`harbor.zkjgy.online/library/kubeedge-dashboard:${VERSION}\` |
+          \`\`\`
+          ${{ env.IMAGE_NAME }}:${VERSION}
+          ${{ env.IMAGE_NAME }}:latest
+          \`\`\`
 
-          ### Helm 部署（在线）
+          支持架构：\`linux/amd64\`、\`linux/arm64\`
+
+          ### Helm Chart（已推送至 Harbor OCI 仓库）
 
           \`\`\`bash
           helm install kubeedge-dashboard \\
-            oci://harbor.zkjgy.online/charts/kubeedge-dashboard \\
-            --version ${CHART_VERSION} --create-namespace -n kubeedge-dashboard
+            oci://${{ env.CHART_REGISTRY }}/kubeedge-dashboard \\
+            --version ${CHART_VERSION} \\
+            --create-namespace -n kubeedge-dashboard
           \`\`\`
 
-          ### 离线部署步骤
+          ---
 
-          **1. 导入镜像**
+          ### 离线部署
+
+          **1. 下载本 Release 的资源文件**
+          - \`kubeedge-dashboard-amd64.tar.gz\` / \`kubeedge-dashboard-arm64.tar.gz\`（离线镜像）
+          - \`${CHART_FILE}\`（离线 Helm Chart）
+
+          **2. 导入镜像到离线服务器**
           \`\`\`bash
-          # amd64
-          docker load -i kubeedge-dashboard-amd64.tar.gz
-          # arm64
-          docker load -i kubeedge-dashboard-arm64.tar.gz
+          # AMD64 节点
+          gunzip -c kubeedge-dashboard-amd64.tar.gz | docker load
+          # ARM64 节点
+          gunzip -c kubeedge-dashboard-arm64.tar.gz | docker load
           \`\`\`
 
-          **2. 离线安装 Helm Chart**
+          > 若使用 containerd / k3s，可改用 \`ctr -n=k8s.io images import\` 或 \`k3s ctr images import\` 导入。
+
+          **3. 离线安装 Helm Chart**
           \`\`\`bash
-          helm install kubeedge-dashboard kubeedge-dashboard-${CHART_VERSION}.tgz \\
-            --set image.tag=${VERSION} --create-namespace -n kubeedge-dashboard
+          helm install kubeedge-dashboard ${CHART_FILE} \\
+            --create-namespace -n kubeedge-dashboard
           \`\`\`
+
+          安装完成后访问：\`http://<节点 IP>:30080\`
           EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "KubeEdge Dashboard ${{ needs.build-push-image.outputs.version }}"
+          name: "KubeEdge Dashboard ${{ needs.build-arch.outputs.version }}"
           body_path: /tmp/release-notes.md
           files: |
             /tmp/release-assets/kubeedge-dashboard-amd64.tar.gz

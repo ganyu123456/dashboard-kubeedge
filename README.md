@@ -99,6 +99,107 @@ kubectl -n kube-system describe secret $(kubectl -n kube-system get secret | gre
 kubectl create token curl-user -n kube-system
 ```
 
+## Deploy with Helm
+
+A Helm Chart is provided under [`charts/kubeedge-dashboard`](./charts/kubeedge-dashboard) for quick deployment to any Kubernetes / KubeEdge cluster. The CI workflow publishes both the multi-arch container image and the Helm Chart to Harbor on every `v*` tag, and also attaches offline artifacts to the corresponding GitHub Release.
+
+### Prerequisites
+
+- Kubernetes >= 1.20 (KubeEdge cluster supported)
+- Helm >= 3.8 (OCI registry support required)
+- Network access to `harbor.zkjgy.online`, or an offline image / chart bundle
+
+### Option 1: Online install from Harbor (OCI)
+
+```bash
+helm install kubeedge-dashboard \
+  oci://harbor.zkjgy.online/charts/kubeedge-dashboard \
+  --version <chart-version> \
+  --create-namespace -n kubeedge-dashboard
+```
+
+> Replace `<chart-version>` with the version published in the GitHub Release (e.g. `0.1.0`). Omit `--version` to install the latest.
+
+### Option 2: Install from local chart source
+
+```bash
+helm install kubeedge-dashboard ./charts/kubeedge-dashboard \
+  --create-namespace -n kubeedge-dashboard
+```
+
+### Option 3: Offline install (air-gapped server)
+
+Download the assets from the corresponding [GitHub Release](../../releases):
+
+- `kubeedge-dashboard-amd64.tar.gz` / `kubeedge-dashboard-arm64.tar.gz` — offline container image
+- `kubeedge-dashboard-<version>.tgz` — offline Helm chart
+
+Then on the offline server:
+
+```bash
+# 1. Load image into the local container runtime
+#    Docker
+gunzip -c kubeedge-dashboard-amd64.tar.gz | docker load
+#    containerd / k3s
+gunzip -c kubeedge-dashboard-amd64.tar.gz | ctr -n=k8s.io images import -
+# gunzip -c kubeedge-dashboard-amd64.tar.gz | k3s ctr images import -
+
+# 2. Install the chart from the local tgz
+helm install kubeedge-dashboard kubeedge-dashboard-<version>.tgz \
+  --create-namespace -n kubeedge-dashboard
+```
+
+> If your cluster nodes pull images from a private registry, push the loaded image to that registry first and override `--set image.repository=<your-registry>/kubeedge-dashboard`.
+
+### Customizing values
+
+Common values you may want to override (see [`charts/kubeedge-dashboard/values.yaml`](./charts/kubeedge-dashboard/values.yaml) for the full list):
+
+| Key | Default | Description |
+|------|---------|-------------|
+| `image.repository` | `harbor.zkjgy.online/library/kubeedge-dashboard` | Container image repository |
+| `image.tag` | `latest` | Image tag |
+| `webService.type` | `NodePort` | Web service type (`NodePort` / `ClusterIP` / `LoadBalancer`) |
+| `webService.nodePort` | `30080` | NodePort for the web UI when `type=NodePort` |
+| `config.apiServerHost` | `https://kubernetes.default.svc:6443` | Kubernetes API server address used by the backend |
+| `config.apiServerSkipTlsVerify` | `"true"` | Skip TLS verification for the API server |
+| `ingress.enabled` | `false` | Enable Ingress |
+| `ingress.host` | `dashboard.kubeedge.local` | Ingress hostname |
+
+Example with overrides:
+
+```bash
+helm install kubeedge-dashboard ./charts/kubeedge-dashboard \
+  --create-namespace -n kubeedge-dashboard \
+  --set image.tag=v1.0.0 \
+  --set webService.nodePort=30088 \
+  --set ingress.enabled=true \
+  --set ingress.host=dashboard.example.com
+```
+
+### Access the Dashboard
+
+After the pods are ready:
+
+```bash
+kubectl -n kubeedge-dashboard get pods
+kubectl -n kubeedge-dashboard get svc
+```
+
+Open `http://<node-ip>:30080` (or your configured `nodePort` / Ingress host) in a browser, then log in with a ServiceAccount token (see [Login with token](#login-with-token) above).
+
+### Upgrade / Uninstall
+
+```bash
+# Upgrade
+helm upgrade kubeedge-dashboard oci://harbor.zkjgy.online/charts/kubeedge-dashboard \
+  --version <new-chart-version> -n kubeedge-dashboard
+
+# Uninstall
+helm uninstall kubeedge-dashboard -n kubeedge-dashboard
+kubectl delete ns kubeedge-dashboard
+```
+
 ## Contributing
 If you're interested in being a contributor and want to get involved in developing the KubeEdge code, please see [CONTRIBUTING](./CONTRIBUTING.md) for details on submitting patches and the contribution workflow.
 
