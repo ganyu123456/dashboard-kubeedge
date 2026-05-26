@@ -1,0 +1,73 @@
+# Default values for kubeedge-dashboard.
+
+replicaCount: 1
+
+image:
+  repository: harbor.zkjgy.online/library/kubeedge-dashboard
+  pullPolicy: Always
+  tag: "latest"
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+namespace:
+  create: true
+  name: kubeedge-dashboard
+
+serviceAccount:
+  create: true
+  name: kubeedge-dashboard
+
+# KubeEdge Dashboard 后端配置
+config:
+  # K8s API Server 地址，Pod 内部使用 in-cluster 配置时填 kubernetes.default.svc
+  apiServerHost: "https://kubernetes.default.svc:6443"
+  apiServerSkipTlsVerify: "true"
+  insecureBindAddress: "0.0.0.0"
+  insecurePort: "8080"
+
+# Web 前端服务（NodePort 对外暴露）
+webService:
+  type: NodePort
+  port: 3000
+  nodePort: 30080
+
+# API 后端服务（ClusterIP，仅集群内访问）
+apiService:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: nginx
+  host: dashboard.kubeedge.local
+  annotations: {}
+  tls: []
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: 3000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: 3000
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3

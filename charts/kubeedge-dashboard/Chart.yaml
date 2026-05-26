@@ -1,0 +1,15 @@
+apiVersion: v2
+name: kubeedge-dashboard
+description: KubeEdge Dashboard - A graphical user interface for managing and monitoring KubeEdge clusters.
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - kubeedge
+  - dashboard
+  - edge-computing
+home: https://github.com/kubeedge/dashboard
+sources:
+  - https://github.com/kubeedge/dashboard
+maintainers:
+  - name: KubeEdge Dashboard Team

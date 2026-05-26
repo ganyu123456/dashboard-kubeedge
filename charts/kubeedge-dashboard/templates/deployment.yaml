@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kubeedge-dashboard.fullname" . }}
+  namespace: {{ include "kubeedge-dashboard.namespace" . }}
+  labels:
+    {{- include "kubeedge-dashboard.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kubeedge-dashboard.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kubeedge-dashboard.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "kubeedge-dashboard.serviceAccountName" . }}
+      containers:
+        - name: dashboard
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: web
+              containerPort: 3000
+              protocol: TCP
+            - name: api
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: API_SERVER
+              value: "http://127.0.0.1:8080"
+            - name: API_SERVER_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kubeedge-dashboard.fullname" . }}-config
+                  key: API_SERVER_HOST
+            - name: API_SERVER_SKIP_TLS_VERIFY
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kubeedge-dashboard.fullname" . }}-config
+                  key: API_SERVER_SKIP_TLS_VERIFY
+            - name: INSECURE_BIND_ADDRESS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kubeedge-dashboard.fullname" . }}-config
+                  key: INSECURE_BIND_ADDRESS
+            - name: INSECURE_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kubeedge-dashboard.fullname" . }}-config
+                  key: INSECURE_PORT
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
